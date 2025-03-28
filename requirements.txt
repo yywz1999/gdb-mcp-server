@@ -1,0 +1,7 @@
+fastmcp>=0.4.1
+flask==2.2.5
+werkzeug==2.3.0
+flask-cors==3.0.10
+pexpect==4.8.0
+pygments==2.10.0
+psutil==5.9.0 

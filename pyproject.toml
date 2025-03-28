@@ -1,0 +1,20 @@
+[project]
+name = "gdb-mcp-server"
+version = "0.1.0"
+description = "GDB Model Context Protocol Server for AI-assisted debugging"
+readme = "README.md"
+requires-python = ">=3.6"
+dependencies = [
+    "fastmcp>=0.4.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "mypy",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
