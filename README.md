@@ -29,6 +29,23 @@ https://github.com/user-attachments/assets/dbb5c2dc-1bc9-4a19-86d7-c967725bc145
 
 通过观看此视频，您可以更直观地了解 GDB MCP 服务器如何简化多架构和远程调试场景。
 
+## 使用说明（以Cursor为例）
+
+1. 下载项目并验证：
+``` shell
+git clone https://github.com/yywz1999/gdb-mcp-server.git
+cd gdb-mcp-server
+python3 -m pip install -r requirements.txt
+python3 ~/MCP_server/gdb-mcp-server/mcp_server.py
+```
+结果如下图所示，即为环境正常
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/03437c53-2f93-414c-b5bf-0405b5bbe8f9" />
+
+2. 配置Cursor：
+<img width="553" alt="image" src="https://github.com/user-attachments/assets/e697d13f-27bf-410d-9cfe-05256e513dd2" />
+
+
+
 ## 最新改进
 
 ### 1. 增强的 iTerm2 支持
