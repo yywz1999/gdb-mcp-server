@@ -18,27 +18,27 @@ logging.basicConfig(
 logger = logging.getLogger('gdb-mcp-server')
 
 # 使用FastMCP库
-    from fastmcp import FastMCP
-    logger.info("成功导入FastMCP库")
+from fastmcp import FastMCP
+logger.info("成功导入FastMCP库")
 
 # 导入工具函数
 import gdb_tools
 logger.info("成功导入GDB工具函数")
 
-    # 创建FastMCP实例
-    logger.info("使用FastMCP实现MCP服务器")
-    mcp = FastMCP("GDB", log_level="INFO")
+# 创建FastMCP实例
+logger.info("使用FastMCP实现MCP服务器")
+mcp = FastMCP("GDB", log_level="INFO")
     
 # 注册工具函数
 # 系统相关工具
 @mcp.tool(name="sys_find_gdb_processes")
 def sys_find_gdb_processes(random_string="dummy") -> Dict:
-        """查找系统中运行的所有GDB进程"""
+    """查找系统中运行的所有GDB进程"""
     return gdb_tools.sys_find_gdb_processes(random_string)
 
 @mcp.tool(name="sys_attach_to_gdb")
 def sys_attach_to_gdb(gdb_pid=None, tty_device=None) -> Dict:
-        """附加到现有的GDB进程"""
+    """附加到现有的GDB进程"""
     return gdb_tools.sys_attach_to_gdb(gdb_pid, tty_device)
 
 @mcp.tool(name="sys_start_gdb_with_remote")
@@ -49,22 +49,22 @@ def sys_start_gdb_with_remote(target_address, executable=None) -> Dict:
 # GDB命令工具
 @mcp.tool(name="gdb_execute_command")
 def gdb_execute_command(command, gdb_pid=None) -> Dict:
-        """执行GDB命令"""
+    """执行GDB命令"""
     return gdb_tools.gdb_execute_command(command, gdb_pid)
 
 @mcp.tool(name="gdb_set_breakpoint")
 def gdb_set_breakpoint(location, gdb_pid=None) -> Dict:
-        """设置断点"""
+    """设置断点"""
     return gdb_tools.gdb_set_breakpoint(location, gdb_pid)
 
 @mcp.tool(name="gdb_delete_breakpoint")
 def gdb_delete_breakpoint(number, gdb_pid=None) -> Dict:
-        """删除断点"""
+    """删除断点"""
     return gdb_tools.gdb_delete_breakpoint(number, gdb_pid)
 
 @mcp.tool(name="gdb_step")
 def gdb_step(gdb_pid=None) -> Dict:
-        """单步执行"""
+    """单步执行"""
     return gdb_tools.gdb_step(gdb_pid)
 
 @mcp.tool(name="gdb_next")
@@ -79,32 +79,32 @@ def gdb_finish(gdb_pid=None) -> Dict:
 
 @mcp.tool(name="gdb_continue")
 def gdb_continue(gdb_pid=None) -> Dict:
-        """继续执行"""
+    """继续执行"""
     return gdb_tools.gdb_continue(gdb_pid)
 
 @mcp.tool(name="gdb_get_registers")
 def gdb_get_registers(gdb_pid=None) -> Dict:
-        """获取寄存器值"""
+    """获取寄存器值"""
     return gdb_tools.gdb_get_registers(gdb_pid)
 
 @mcp.tool(name="gdb_examine_memory")
 def gdb_examine_memory(address, count="10", format_type="x", gdb_pid=None) -> Dict:
-        """检查内存"""
+    """检查内存"""
     return gdb_tools.gdb_examine_memory(address, count, format_type, gdb_pid)
 
 @mcp.tool(name="gdb_get_stack")
 def gdb_get_stack(gdb_pid=None) -> Dict:
-        """获取堆栈信息"""
+    """获取堆栈信息"""
     return gdb_tools.gdb_get_stack(gdb_pid)
 
 @mcp.tool(name="gdb_get_locals")
 def gdb_get_locals(gdb_pid=None) -> Dict:
-        """获取局部变量"""
+    """获取局部变量"""
     return gdb_tools.gdb_get_locals(gdb_pid)
 
 @mcp.tool(name="gdb_disassemble")
 def gdb_disassemble(location="", gdb_pid=None) -> Dict:
-        """反汇编代码"""
+    """反汇编代码"""
     return gdb_tools.gdb_disassemble(location, gdb_pid)
 
 @mcp.tool(name="gdb_connect_remote")
@@ -115,7 +115,7 @@ def gdb_connect_remote(target_address, gdb_pid=None) -> Dict:
 if __name__ == "__main__":
     logger.info("启动GDB MCP服务器")
     try:
-            mcp.run()
+        mcp.run()
     except KeyboardInterrupt:
         logger.info("GDB MCP服务器已终止")
     except Exception as e:
