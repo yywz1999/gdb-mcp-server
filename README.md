@@ -1,4 +1,5 @@
 # GDB MCP 服务器
+[![smithery badge](https://smithery.ai/badge/@yywz1999/gdb-mcp-server)](https://smithery.ai/server/@yywz1999/gdb-mcp-server)
 
 一个支持人工智能辅助调试的 GDB MCP (Model Context Protocol) 服务器。该服务器允许 AI 代理和其他工具通过 MCP 协议与 GDB 进行交互。
 
@@ -85,6 +86,15 @@ GDB MCP 服务器使用以下技术实现 GDB 的控制和通信：
 
 ## 安装
 
+### Installing via Smithery
+
+To install GDB MCP 服务器 for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@yywz1999/gdb-mcp-server):
+
+```bash
+npx -y @smithery/cli install @yywz1999/gdb-mcp-server --client claude
+```
+
+### Manual Installation
 1. 克隆仓库：
    ```bash
    git clone https://github.com/yywz1999/gdb-mcp-server.git
