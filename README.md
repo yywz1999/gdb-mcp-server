@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/yywz1999-gdb-mcp-server-badge.png)](https://mseep.ai/app/yywz1999-gdb-mcp-server)
+
 # GDB MCP 服务器
 
 一个支持人工智能辅助调试的 GDB MCP (Model Context Protocol) 服务器。该服务器允许 AI 代理和其他工具通过 MCP 协议与 GDB 进行交互。
