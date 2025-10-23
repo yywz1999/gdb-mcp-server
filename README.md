@@ -11,6 +11,8 @@
 - 发现并附加到现有的 GDB 进程
 - 通过终端窗口与 GDB 通信（macOS 上优化支持 iTerm2）
 - 支持 MCP 协议，便于与 AI 助手集成
+- **双通信模式支持**：stdio（标准输入输出）和 HTTP 流式通信
+- **HTTP 流式通信**：基于 Server-Sent Events (SSE) 的实时双向通信
 - 智能处理 GDB 命令阻塞，自动发送中断信号
 - 支持多架构、多主机和远程调试场景
 - 通过简单的函数调用执行常见的 GDB 调试操作：
@@ -48,18 +50,25 @@ python3 ~/MCP_server/gdb-mcp-server/mcp_server.py
 
 ## 最新改进
 
-### 1. 增强的 iTerm2 支持
+### 1. HTTP 流式通信支持 🆕
+- **双通信模式**：支持传统的 stdio 模式和新的 HTTP 流式模式
+- **Server-Sent Events (SSE)**：实现实时双向通信，支持长连接和心跳保活
+- **会话管理**：支持多客户端并发访问，每个会话独立管理
+- **RESTful API**：提供完整的 HTTP API 接口，便于集成和测试
+- **跨域支持**：启用 CORS，支持 Web 应用直接调用
+
+### 2. 增强的 iTerm2 支持
 - 优化了 iTerm2 会话查找和交互机制
 - 使用直接命令写入方式，无需切换窗口焦点
 - 支持基于会话内容识别 GDB 会话
 
-### 2. 智能阻塞处理
+### 3. 智能阻塞处理
 - 自动检测可能导致阻塞的命令（如远程连接、继续执行等）
 - 使用超时机制识别阻塞状态
 - 在检测到阻塞时自动发送中断信号
 - 提取并返回部分执行结果
 
-### 3. 更可靠的输出捕获
+### 4. 更可靠的输出捕获
 - 使用唯一标记标识命令输出范围
 - 智能移除 GDB 提示符和命令回显
 - 多尝试机制确保命令响应可靠性
@@ -70,12 +79,22 @@ GDB MCP 服务器使用以下技术实现 GDB 的控制和通信：
 
 1. **MCP 协议实现**：使用 [FastMCP](https://github.com/jlowin/fastmcp) 库提供符合 Model Context Protocol 规范的工具接口
 
-2. **多种通信策略**：
+2. **双通信模式**：
+   - **stdio 模式**：传统的标准输入输出通信，适用于本地工具集成
+   - **HTTP 流式模式**：基于 Flask + Server-Sent Events 的实时通信，支持 Web 应用和远程调用
+
+3. **多种通信策略**：
    - **AppleScript**：在 macOS 上与 iTerm2 通信（推荐）
    - **pexpect**：直接与 GDB 进程通信（Linux 优先）
    - **键盘模拟**：作为最后的回退方案
 
-3. **进程发现**：自动查找系统中运行的 GDB 进程，无需用户手动指定进程 ID
+4. **进程发现**：自动查找系统中运行的 GDB 进程，无需用户手动指定进程 ID
+
+5. **HTTP 技术栈**：
+   - **Flask**：轻量级 Web 框架，提供 HTTP 服务
+   - **Flask-CORS**：跨域资源共享支持
+   - **Server-Sent Events (SSE)**：实现服务器到客户端的实时推送
+   - **会话管理**：多客户端并发支持，独立会话状态
 
 ## 测试环境
 
@@ -98,12 +117,89 @@ GDB MCP 服务器使用以下技术实现 GDB 的控制和通信：
 
 ## 使用方法
 
-1. 启动服务器：
+### 方式一：统一启动脚本（推荐）
+
+使用统一启动脚本可以选择不同的通信模式：
+
+```bash
+# stdio 模式（默认）
+python3 run_server.py
+
+# HTTP 流式模式
+python3 run_server.py --mode http
+
+# HTTP 模式，指定端口
+python3 run_server.py --mode http --port 9000
+
+# HTTP 模式，只监听本地
+python3 run_server.py --mode http --host localhost
+```
+
+### 方式二：直接启动
+
+```bash
+# stdio 模式
+python3 mcp_server.py
+
+# HTTP 流式模式
+python3 http_server.py
+
+# HTTP 模式，指定参数
+python3 http_server.py --host 0.0.0.0 --port 8080
+```
+
+### HTTP 流式模式使用
+
+HTTP 流式模式提供以下 API 端点：
+
+- **健康检查**: `GET /health`
+- **服务器信息**: `GET /mcp/info`
+- **工具列表**: `GET /mcp/tools/list`
+- **创建会话**: `POST /mcp/session`
+- **流式连接**: `GET /mcp/session/{session_id}/stream`
+- **工具调用**: `POST /mcp/call`
+- **流式工具调用**: `POST /mcp/session/{session_id}/call`
+- **关闭会话**: `DELETE /mcp/session/{session_id}`
+
+#### 快速测试
+
+1. 启动 HTTP 服务器：
    ```bash
-   python3 mcp_server.py
+   python3 run_server.py --mode http
    ```
 
-2. 使用 MCP 协议通过服务器与 GDB 交互。服务器提供以下工具函数：
+2. 使用测试客户端：
+   ```bash
+   # 测试所有功能
+   python3 test_http_client.py
+
+   # 只测试基本功能
+   python3 test_http_client.py --test basic
+
+   # 测试流式通信
+   python3 test_http_client.py --test streaming
+   ```
+
+3. 手动 API 调用示例：
+   ```bash
+   # 健康检查
+   curl http://localhost:8080/health
+
+   # 获取工具列表
+   curl http://localhost:8080/mcp/tools/list
+
+   # 创建会话
+   curl -X POST http://localhost:8080/mcp/session
+
+   # 调用工具
+   curl -X POST http://localhost:8080/mcp/call \
+     -H "Content-Type: application/json" \
+     -d '{"tool": "sys_find_gdb_processes", "arguments": {"random_string": "test"}}'
+   ```
+
+### MCP 工具函数
+
+服务器提供以下工具函数：
 
    ### 系统工具
    - `sys_find_gdb_processes` - 查找所有运行的 GDB 进程
