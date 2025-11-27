@@ -7,10 +7,11 @@ import sys
 import logging
 from typing import Tuple, List, Dict, Any, Optional
 
-# 导入三种通信方法
+# 导入所有通信方法
 from .pexpect_comm import PexpectCommunicator
 from .applescript_comm import AppleScriptCommunicator
 from .keyboard_comm import KeyboardCommunicator
+from .tmux_comm import TmuxCommunicator
 
 logger = logging.getLogger('gdb-mcp-server.gdb_communicator')
 
@@ -22,6 +23,7 @@ class GdbCommunicator:
         # 创建各种通信方法的实例
         self.pexpect_comm = PexpectCommunicator()
         self.applescript_comm = AppleScriptCommunicator() if sys.platform == 'darwin' else None
+        self.tmux_comm = TmuxCommunicator() if sys.platform != 'darwin' else None
         self.keyboard_comm = KeyboardCommunicator()
         
         # 控制状态
@@ -62,8 +64,20 @@ class GdbCommunicator:
                     self.preferred_method = "applescript"
                     return True
         
-        # 尝试使用pexpect连接（非macOS平台）
+        # 在Linux平台上，优先使用tmux
         if sys.platform != 'darwin':
+            # 首先尝试使用tmux
+            if self.tmux_comm:
+                logger.info("在Linux上，优先尝试使用tmux查找GDB会话")
+                if self.tmux_comm.find_gdb_window():
+                    self.preferred_method = "tmux"
+                    self.connected = True
+                    logger.info(f"使用tmux方式成功找到GDB会话")
+                    return True
+                else:
+                    logger.info("未找到tmux GDB会话，将尝试其他方法")
+            
+            # 如果tmux失败，尝试使用pexpect连接
             logger.info("尝试使用pexpect附加到GDB进程")
             if self.pexpect_comm.initialize_connection(self.gdb_pid, self.tty_device):
                 self.preferred_method = "pexpect"
@@ -124,8 +138,17 @@ class GdbCommunicator:
                 logger.error("在macOS上无法初始化AppleScript通信器")
                 return False, "在macOS上无法初始化AppleScript通信器，无法执行命令"
         
-        # 对于非macOS系统，优先使用pexpect方法
-        logger.info("在非macOS平台上，优先使用pexpect方法")
+        # 对于非macOS系统，优先使用tmux方法
+        logger.info("在非macOS平台上，优先使用tmux方法")
+        if self.tmux_comm and self.preferred_method == "tmux":
+            success, output = self.tmux_comm.execute_command(command)
+            if success:
+                return success, output
+            else:
+                logger.warning("tmux方法执行失败，尝试其他方法")
+        
+        # 如果tmux失败，尝试pexpect方法
+        logger.info("尝试使用pexpect方法执行命令")
         success, output = self.pexpect_comm.execute_command(command)
         if success:
             self.preferred_method = "pexpect"
@@ -142,23 +165,38 @@ class GdbCommunicator:
         logger.error("所有通信方法都失败，无法执行命令")
         return False, "无法与GDB进程通信，所有方法都失败"
     
-    def start_gdb_with_remote(self, target_address, executable=None) -> Tuple[bool, str]:
-        """启动GDB并连接到远程目标"""
-        logger.info(f"启动GDB并连接到远程目标: {target_address}")
+    def check_gdb_blocked(self) -> Dict[str, Any]:
+        """检查GDB是否处于阻塞状态
         
-        # 使用pexpect启动新的GDB进程并连接
-        success, output = self.pexpect_comm.start_gdb_with_remote(target_address, executable)
-        if success:
-            self.connected = True
-            self.preferred_method = "pexpect"
-            # 获取GDB进程ID
-            import psutil
-            self.gdb_pid = str(self.pexpect_comm.gdb_pexpect.pid)
-            logger.info(f"成功启动GDB进程 PID={self.gdb_pid} 并连接到远程目标")
-            return True, output
+        返回:
+            Dict: 包含阻塞状态信息的字典
+                - is_blocked: 是否处于阻塞状态
+                - running_time: 如果阻塞，已运行时间（秒）
+                - status: 状态描述
+        """
+        if not self.connected:
+            return {
+                "is_blocked": False,
+                "running_time": 0,
+                "status": "未连接到GDB进程"
+            }
         
-        logger.error(f"启动GDB并连接到远程目标失败: {output}")
-        return False, output
+        # 根据当前使用的通信方法检查阻塞状态
+        if self.preferred_method == "applescript" and self.applescript_comm:
+            return self.applescript_comm.check_gdb_blocked()
+        elif self.preferred_method == "tmux" and self.tmux_comm:
+            return self.tmux_comm.check_gdb_blocked()
+        elif self.preferred_method == "pexpect":
+            # pexpect方法可以通过检查进程状态来判断
+            if hasattr(self.pexpect_comm, 'check_gdb_blocked'):
+                return self.pexpect_comm.check_gdb_blocked()
+        
+        # 默认返回未阻塞
+        return {
+            "is_blocked": False,
+            "running_time": 0,
+            "status": "当前通信方法不支持阻塞检测"
+        }
     
     def get_communication_status(self) -> Dict[str, Any]:
         """获取当前通信状态的信息"""
@@ -171,14 +209,24 @@ class GdbCommunicator:
         }
         
         # 检查各种通信方法的可用性
-        try:
-            import pexpect
-            status["available_methods"].append("pexpect")
-        except ImportError:
-            pass
-        
         if sys.platform == 'darwin':
             status["available_methods"].append("applescript")
+        else:
+            # Linux平台
+            # 检查tmux是否可用
+            try:
+                import subprocess
+                subprocess.check_call(['which', 'tmux'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                status["available_methods"].append("tmux")
+            except:
+                pass
+            
+            # 检查pexpect是否可用
+            try:
+                import pexpect
+                status["available_methods"].append("pexpect")
+            except ImportError:
+                pass
         
         status["available_methods"].append("keyboard")
         

@@ -9,7 +9,7 @@
 ## 特性
 
 - 发现并附加到现有的 GDB 进程
-- 通过终端窗口与 GDB 通信（macOS 上优化支持 iTerm2）
+- 通过终端窗口与 GDB 通信（macOS 上优化支持 iTerm2，Linux 使用 tmux）
 - 支持 MCP 协议，便于与 AI 助手集成
 - 智能处理 GDB 命令阻塞，自动发送中断信号
 - 支持多架构、多主机和远程调试场景
@@ -44,25 +44,18 @@ python3 ~/MCP_server/gdb-mcp-server/mcp_server.py
 2. 配置Cursor：
 <img width="553" alt="image" src="https://github.com/user-attachments/assets/e697d13f-27bf-410d-9cfe-05256e513dd2" />
 
+## 2025/11/27 更新内容：
+- 1、Linux 端 tmux 适配全面升级：自动遍历所有 session/pane、过滤 `gdbserver`，精准附加到 pwndbg/gef 等交互式 gdb 会话，无需切换窗口。
+- 2、iTerm2 会话识别更精准：直接写入目标窗口且可按内容定位 GDB 会话，无需手动切换焦点。
+- 3、阻塞处理更智能：自动判定 `continue/target remote` 等高风险命令并在阻塞时发送中断信号，配合唯一标记让输出更干净。
 
+## 与 gdb-mcp-server-main 相比的新增能力
 
-## 最新改进
-
-### 1. 增强的 iTerm2 支持
-- 优化了 iTerm2 会话查找和交互机制
-- 使用直接命令写入方式，无需切换窗口焦点
-- 支持基于会话内容识别 GDB 会话
-
-### 2. 智能阻塞处理
-- 自动检测可能导致阻塞的命令（如远程连接、继续执行等）
-- 使用超时机制识别阻塞状态
-- 在检测到阻塞时自动发送中断信号
-- 提取并返回部分执行结果
-
-### 3. 更可靠的输出捕获
-- 使用唯一标记标识命令输出范围
-- 智能移除 GDB 提示符和命令回显
-- 多尝试机制确保命令响应可靠性
+- **终端输出隔离**：tmux 侧统一插入唯一的开始/结束标记，自动清理命令和提示符，AI 仅接收结构化结果，不再混入终端错误。
+- **阻塞检测与自动中断**：针对 `continue`、`run`、`target remote` 等命令，提供多次轮询与 `Ctrl-C` 自动中断策略，并返回清晰提示。
+- **Linux 端适配**：新的 tmux 通信链可以遍历所有 session/pane，精确定位真正的 `gdb/pwndbg/gef` 进程并忽略 `gdbserver`，整个控制过程无需切换窗口。
+- **更安全的进程筛选**：`sys_find_gdb_processes` 与 tmux 探测逻辑会过滤 Python 启动脚本及远程 server，只附加到可交互的本地 GDB。
+- **API 精简**：移除了不再需要的“启动 GDB”接口，保留并强化“查找 → 附加 → 执行”主流程，让 README、工具列表与实现保持一致。
 
 ## 技术实现简介
 
@@ -108,7 +101,6 @@ GDB MCP 服务器使用以下技术实现 GDB 的控制和通信：
    ### 系统工具
    - `sys_find_gdb_processes` - 查找所有运行的 GDB 进程
    - `sys_attach_to_gdb` - 附加到 GDB 进程
-   - `sys_start_gdb_with_remote` - 启动 GDB 并连接到远程目标
 
    ### GDB 调试工具
    - `gdb_execute_command` - 执行任意 GDB 命令

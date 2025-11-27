@@ -8,7 +8,7 @@ import sys
 import time
 import logging
 import subprocess
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 import traceback
 
 logger = logging.getLogger('gdb-mcp-server.applescript_comm')
@@ -20,6 +20,8 @@ class AppleScriptCommunicator:
         logger.info("AppleScript通信器初始化")
         self._check_platform()
         self.gdb_pid = None  # 添加gdb_pid属性
+        self.last_command_time = 0  # 记录最后一次命令执行时间
+        self.is_blocked = False  # GDB阻塞状态标志
     
     def _check_platform(self):
         """检查运行平台是否为macOS"""
@@ -34,87 +36,140 @@ class AppleScriptCommunicator:
             logger.warning("当前平台不是macOS，无法使用AppleScript查找GDB窗口")
             return False
             
-        # 构建仅查找但不激活的AppleScript脚本
-        find_script = """
+        # 使用find_gdb_session方法
+        result = self.find_gdb_session()
+        if result:
+            logger.info("找到GDB会话")
+        else:
+            logger.warning("未找到GDB会话")
+        return result
+    
+    # 保留旧方法名称以兼容已有代码
+    activate_gdb_window = find_gdb_window
+
+    def check_gdb_blocked(self) -> Dict:
+        """检查GDB是否处于阻塞状态（正在运行）
+        
+        返回:
+            Dict: 包含阻塞状态信息的字典
+                - is_blocked: 是否处于阻塞状态
+                - running_time: 如果阻塞，已运行时间（秒）
+                - status: 状态描述
+        """
+        if not self.is_blocked:
+            return {
+                "is_blocked": False,
+                "running_time": 0,
+                "status": "GDB处于交互状态"
+            }
+        
+        running_time = time.time() - self.last_command_time
+        return {
+            "is_blocked": True,
+            "running_time": running_time,
+            "status": f"GDB正在运行中，已运行 {running_time:.1f} 秒"
+        }
+    
+    def find_gdb_session(self):
+        """查找包含GDB的终端会话"""
+        if sys.platform != 'darwin':
+            return None
+        
+        find_session_script = """
         tell application "iTerm2"
             try
-                set foundGDB to false
+                set foundSession to missing value
                 
                 -- 遍历所有窗口和标签页查找GDB进程
                 repeat with aWindow in windows
-                    if foundGDB then exit repeat
+                    if foundSession is not missing value then exit repeat
                     
                     repeat with aTab in tabs of aWindow
-                        if foundGDB then exit repeat
+                        if foundSession is not missing value then exit repeat
                         
                         repeat with aSession in sessions of aTab
-                            if foundGDB then exit repeat
-                            
                             try
                                 -- 获取会话中的文本内容
                                 set sessionText to text of aSession
                                 
                                 -- 查找GDB提示符或其他GDB相关内容
                                 if sessionText contains "(gdb)" or sessionText contains "pwndbg>" or sessionText contains "gef>" then
-                                    set foundGDB to true
+                                    set foundSession to aSession
                                     exit repeat
                                 end if
-                            on error errMsg
+                            on error
                                 -- 继续下一个会话
                             end try
                         end repeat
                     end repeat
                 end repeat
                 
-                return foundGDB
+                if foundSession is not missing value then
+                    return "found"
+                else
+                    return "not_found"
+                end if
             on error errMsg
-                return false
+                return "error: " & errMsg
             end try
         end tell
         """
         
         try:
-            result = subprocess.check_output(['osascript', '-e', find_script], text=True, timeout=5).strip()
-            logger.info(f"GDB窗口查找结果: {result}")
-            return result.lower() == "true"
+            result = subprocess.check_output(['osascript', '-e', find_session_script], text=True, timeout=5).strip()
+            return result == "found"
         except Exception as e:
-            logger.warning(f"查找GDB窗口时出错: {str(e)}")
+            logger.warning(f"查找GDB会话时出错: {str(e)}")
             return False
-    
-    # 保留旧方法名称以兼容已有代码
-    activate_gdb_window = find_gdb_window
-    
+
     def execute_command(self, command) -> Tuple[bool, str]:
         """使用AppleScript执行GDB命令"""
         if sys.platform != 'darwin':
             return False, "当前平台不是macOS，无法使用AppleScript通信方式"
             
-        # 首先生成一个唯一标记，以便识别输出
+        # 生成唯一标记
         time_id = int(time.time())
         output_marker = f"<<<GDB_OUTPUT_START_{time_id}>>>"
         end_marker = f"<<<GDB_OUTPUT_END_{time_id}>>>"
         
-        # 获取GDB PID，如果有的话
-        gdb_pid = self.gdb_pid if hasattr(self, 'gdb_pid') and self.gdb_pid else ""
+        # 检查是否是可能阻塞的命令
+        might_block = command.strip() in ["c", "continue", "run", "r"] or "target remote" in command
         
-        # 特殊处理可能导致阻塞的命令
-        might_block = False
-        # 检查是否是可能阻塞的命令（如target remote, continue等）
-        if "target remote" in command or command.strip() in ["c", "continue", "run", "r"]:
-            logger.info(f"检测到可能阻塞的命令: {command}")
-            might_block = True
-        
-        # 简化的指令执行方式
-        # 1. 先发送标记和命令
-        pre_script = f"""
+        # 发送命令的AppleScript - 查找包含GDB的会话而不是使用当前窗口
+        send_script = f"""
         tell application "iTerm2"
             try
-                set frontWindow to current window
-                set frontTab to current tab of frontWindow
-                set frontSession to current session of frontTab
+                set foundSession to missing value
                 
-                tell frontSession
-                    -- 发送输出标记
+                -- 遍历所有窗口和标签页查找GDB进程
+                repeat with aWindow in windows
+                    if foundSession is not missing value then exit repeat
+                    
+                    repeat with aTab in tabs of aWindow
+                        if foundSession is not missing value then exit repeat
+                        
+                        repeat with aSession in sessions of aTab
+                            try
+                                -- 获取会话中的文本内容
+                                set sessionText to text of aSession
+                                
+                                -- 查找GDB提示符或其他GDB相关内容
+                                if sessionText contains "(gdb)" or sessionText contains "pwndbg>" or sessionText contains "gef>" then
+                                    set foundSession to aSession
+                                    exit repeat
+                                end if
+                            on error
+                                -- 继续下一个会话
+                            end try
+                        end repeat
+                    end repeat
+                end repeat
+                
+                if foundSession is missing value then
+                    return "error: 未找到GDB会话"
+                end if
+                
+                tell foundSession
                     write text "echo '{output_marker}'"
                     write text "{command}"
                     return "success"
@@ -126,163 +181,136 @@ class AppleScriptCommunicator:
         """
         
         try:
-            # 执行前置脚本
-            pre_result = subprocess.check_output(['osascript', '-e', pre_script], text=True, timeout=3).strip()
-            if not pre_result.startswith("success"):
-                logger.error(f"发送命令失败: {pre_result}")
-                return False, f"发送命令失败: {pre_result}"
+            # 发送命令
+            send_result = subprocess.check_output(['osascript', '-e', send_script], text=True, timeout=3).strip()
+            if not send_result.startswith("success"):
+                return False, f"发送命令失败: {send_result}"
             
-            # 2. 尝试最多3次获取输出，检查是否有回显
-            max_attempts = 3 if might_block else 1
-            got_response = False
-            content = ""
+            # 等待并检查输出
+            time.sleep(0.5)  # 给命令一些执行时间
             
-            for attempt in range(max_attempts):
-                # 等待一段时间
-                time.sleep(1.0)
-                
-                # 检查输出
-                check_script = f"""
-                tell application "iTerm2"
-                    try
-                        set frontWindow to current window
-                        set frontTab to current tab of frontWindow
-                        set frontSession to current session of frontTab
-                        
-                        tell frontSession
-                            -- 获取当前内容
-                            set currentContent to text of frontSession
-                            
-                            -- 检查是否包含输出标记
-                            if currentContent contains "{output_marker}" then
-                                -- 尝试发送结束标记
-                                write text "echo '{end_marker}'"
-                                delay 0.2
-                                
-                                -- 再次获取内容
-                                set finalContent to text of frontSession
-                                
-                                -- 返回内容
-                                return finalContent
-                            else
-                                -- 没有找到输出标记，可能是命令没有产生任何输出
-                                -- 尝试发送一个测试命令来检查终端是否响应
-                                write text "echo 'GDB_TEST_{attempt}'"
-                                delay 0.2
-                                
-                                -- 再次获取内容
-                                set testContent to text of frontSession
-                                
-                                if testContent contains "GDB_TEST_{attempt}" then
-                                    -- 终端响应正常，只是命令没有输出
-                                    write text "echo '{end_marker}'"
-                                    delay 0.2
-                                    return testContent
-                                else
-                                    -- 终端没有响应，可能阻塞了
-                                    return "no_response: " & currentContent
-                                end if
-                            end if
-                        end tell
-                    on error errMsg
-                        return "error: " & errMsg
-                    end try
-                end tell
-                """
-                
-                check_result = subprocess.check_output(['osascript', '-e', check_script], text=True, timeout=3).strip()
-                
-                if check_result.startswith("error:"):
-                    logger.warning(f"检查输出时出错: {check_result}")
-                    continue
-                
-                if check_result.startswith("no_response:"):
-                    logger.warning(f"检测到可能的阻塞 (尝试 {attempt+1}/{max_attempts})")
-                    content = check_result.replace("no_response: ", "")
+            # 检查输出的AppleScript - 也要查找GDB会话
+            check_script = f"""
+            tell application "iTerm2"
+                try
+                    set foundSession to missing value
                     
-                    # 如果是最后一次尝试且没有响应，判定为阻塞
-                    if attempt == max_attempts - 1:
-                        got_response = False
-                        break
-                else:
-                    # 有响应
-                    content = check_result
-                    got_response = True
-                    break
-            
-            # 3. 如果判断为阻塞，发送中断信号
-            if not got_response and might_block:
-                logger.warning(f"命令执行阻塞，发送中断信号")
-                
-                interrupt_script = """
-                tell application "iTerm2"
-                    try
-                        set frontWindow to current window
-                        set frontTab to current tab of frontWindow
-                        set frontSession to current session of frontTab
+                    -- 遍历所有窗口和标签页查找GDB进程
+                    repeat with aWindow in windows
+                        if foundSession is not missing value then exit repeat
                         
-                        tell frontSession
-                            -- 发送Ctrl+C中断
-                            write text (ASCII character 3)
-                            delay 0.5
+                        repeat with aTab in tabs of aWindow
+                            if foundSession is not missing value then exit repeat
+                            
+                            repeat with aSession in sessions of aTab
+                                try
+                                    -- 获取会话中的文本内容
+                                    set sessionText to text of aSession
+                                    
+                                    -- 查找GDB提示符或其他GDB相关内容
+                                    if sessionText contains "(gdb)" or sessionText contains "pwndbg>" or sessionText contains "gef>" then
+                                        set foundSession to aSession
+                                        exit repeat
+                                    end if
+                                on error
+                                    -- 继续下一个会话
+                                end try
+                            end repeat
+                        end repeat
+                    end repeat
+                    
+                    if foundSession is missing value then
+                        return "error: 未找到GDB会话"
+                    end if
+                    
+                    tell foundSession
+                        -- 获取当前内容
+                        set currentContent to text of foundSession
+                        
+                        -- 检查是否有命令输出（包含START但没有END标记表示可能阻塞）
+                        if currentContent contains "{output_marker}" then
+                            -- 检查是否已经有结束标记
+                            if currentContent contains "{end_marker}" then
+                                -- 已经完成，直接返回
+                                return currentContent
+                            end if
                             
                             -- 发送结束标记
-                            write text "echo '<<<GDB_INTERRUPTED>>>'"
+                            write text "echo '{end_marker}'"
+                            delay 0.3
+                            set updatedContent to text of foundSession
                             
-                            return "interrupted"
-                        end tell
-                    on error errMsg
-                        return "error: " & errMsg
-                    end try
-                end tell
-                """
-                
-                interrupt_result = subprocess.check_output(['osascript', '-e', interrupt_script], text=True, timeout=3).strip()
-                logger.info(f"中断命令结果: {interrupt_result}")
-                
-                # 尝试从内容中提取有用的信息
-                partial_output = ""
-                if output_marker in content:
-                    parts = content.split(output_marker, 1)
-                    if len(parts) > 1:
-                        partial_output = parts[1]
-                
-                if partial_output:
-                    return True, f"命令执行时阻塞，已发送中断信号。部分输出：\n{partial_output}"
-                else:
-                    return True, f"命令执行时阻塞，已发送中断信号。请在GDB终端中查看结果。"
-            
-            # 4. 处理输出
-            # 提取输出内容
-            output_value = ""
-            if output_marker in content:
-                # 使用简单的字符串分割提取输出
-                parts = content.split(output_marker, 1)
-                if len(parts) > 1:
-                    after_marker = parts[1]
-                    if end_marker in after_marker:
-                        output_parts = after_marker.split(end_marker, 1)
-                        output_value = output_parts[0]
+                            -- 再次检查是否有结束标记
+                            if updatedContent contains "{end_marker}" then
+                                return updatedContent
+                            else
+                                -- 有START但没有END，表示阻塞
+                                return "BLOCKED:" & currentContent
+                            end if
+                        end if
                         
-                        # 尝试清理输出（移除命令本身）
-                        if command in output_value:
-                            cmd_parts = output_value.split(command, 1)
-                            if len(cmd_parts) > 1:
-                                output_value = cmd_parts[1]
+                        -- 没有START标记，发送测试命令检查响应
+                        write text "echo 'GDB_TEST'"
+                        delay 0.2
+                        set testContent to text of foundSession
+                        
+                        if testContent contains "GDB_TEST" then
+                            -- 终端响应但没有输出
+                            write text "echo '{end_marker}'"
+                            delay 0.2
+                            return testContent
+                        else
+                            -- 终端没有响应，可能阻塞
+                            return "BLOCKED:" & currentContent
+                        end if
+                    end tell
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+            """
             
-            # 无论是否提取到输出，都认为命令执行成功（只要终端响应）
-            if got_response:
-                if output_value:
-                    logger.info(f"成功执行命令并获取输出: {command}")
-                    return True, output_value.strip()
-                else:
-                    logger.info(f"成功执行命令，但没有输出: {command}")
-                    return True, f"命令 '{command}' 已成功执行，但没有捕获到输出。请在GDB终端中查看结果。"
-            else:
-                logger.warning(f"执行命令时未获得响应: {command}")
-                return False, "执行命令时未获得终端响应，可能出现异常。"
+            # 检查输出
+            check_result = subprocess.check_output(['osascript', '-e', check_script], text=True, timeout=3).strip()
             
+            if check_result.startswith("error:"):
+                return False, f"检查输出时出错: {check_result}"
+            
+            if check_result.startswith("BLOCKED:"):
+                # 更新阻塞状态
+                self.is_blocked = True
+                self.last_command_time = time.time()
+                
+                # 提取可能的部分输出
+                content = check_result[8:]  # 去掉"BLOCKED:"前缀
+                if output_marker in content:
+                    # 检查是否有END标记
+                    if end_marker not in content:
+                        # 有START但没有END，说明GDB正在阻塞执行
+                        parts = content.split(output_marker, 1)
+                        if len(parts) > 1:
+                            partial_output = parts[1].strip()
+                            if partial_output:
+                                return True, f"⚠️ GDB处于阻塞状态（检测到GDB_OUTPUT_START但没有END标记）\\n程序可能正在运行或处理大量代码\\n部分输出：\\n{partial_output}"
+                        
+                        return True, "⚠️ GDB处于阻塞状态（检测到GDB_OUTPUT_START但没有END标记）\\n程序可能正在运行或处理大量代码"
+                
+                return True, "⚠️ GDB处于阻塞状态，程序可能正在运行"
+            
+            # 提取命令输出
+            if output_marker in check_result and end_marker in check_result:
+                self.is_blocked = False  # 重置阻塞状态
+                parts = check_result.split(output_marker, 1)[1].split(end_marker, 1)
+                output = parts[0].strip() if parts else ""
+                return True, output
+            
+            # 没有输出但响应正常
+            self.is_blocked = False
+            return True, ""
+            
+        except subprocess.TimeoutExpired:
+            logger.warning("执行命令超时")
+            return False, "执行命令超时"
         except Exception as e:
             logger.error(f"执行命令时出错: {str(e)}")
-            logger.error(traceback.format_exc())
             return False, f"执行命令时出错: {str(e)}" 
